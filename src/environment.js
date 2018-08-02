@@ -1343,8 +1343,8 @@ export class LexicalEnvironment {
     }
     function fixupLocation(loc: ?BabelNodeSourceLocation): void {
       if (loc == null) return;
+      // Bail out when location already got fixed up or doesn't have source
       if (loc.source === undefined || loc.source !== source) return;
-      // TODO: Ensure that loc.source corresponds to map. See #2353.
 
       let locStart = loc.start;
       let locEnd = loc.end;
@@ -1357,19 +1357,20 @@ export class LexicalEnvironment {
       invariant(startInfo.newLine <= endInfo.newLine);
       invariant(startInfo.newLine !== endInfo.newLine || startInfo.newColumn <= endInfo.newColumn);
 
-      if (startOriginalPosition.source != null || endOriginalPosition.source != null) {
+      let originalSource = startOriginalPosition.source || endOriginalPosition.source;
+      if (originalSource) {
         fixupPosition(locStart, startInfo, endInfo);
         fixupPosition(locEnd, endInfo, startInfo);
 
-        // NOTE: The end position seems to be sometimes wrong, probably due to a limitation of
-        // what's persisted in the sourcemaps. In fact, the end position may be so wrong that
-        // it points to before the start position.
+        // NOTE: Babel only persists the start position of most nodes in source maps
+        // (only block statements also get their end positions persisted).
+        // Thus, end positions tend to be mostly wrong (in fact often so wrong
+        // that they point before the start position).
         // The best way to deal with that is to never print end positions in user-facing
-        // messages.
+        // messages, or use them for any reason.
 
-        invariant(loc.source !== startOriginalPosition.source);
-        invariant(startOriginalPosition.source != null);
-        loc.source = startOriginalPosition.source;
+        invariant(loc.source !== originalSource);
+        loc.source = originalSource;
       }
     }
     function fixupComments(comments: ?Array<BabelNodeComment>) {
