@@ -51,7 +51,7 @@ import { TypesDomain, ValuesDomain } from "./domains/index.js";
 import PrimitiveValue from "./values/PrimitiveValue.js";
 import { createOperationDescriptor } from "./utils/generator.js";
 
-const sourceMap = require("source-map");
+import { SourceMapConsumer, type NullableMappedPosition } from "source-map";
 
 function deriveGetBinding(realm: Realm, binding: Binding) {
   let types = TypesDomain.topVal;
@@ -1288,11 +1288,12 @@ export class LexicalEnvironment {
   }
 
   fixupSourceLocations(ast: BabelNode, map: string): void {
-    const smc = new sourceMap.SourceMapConsumer(map);
     invariant(ast.loc);
     const source = ast.loc.source;
     invariant(source !== undefined);
     const positionInfos = new Map();
+
+    const smc = new SourceMapConsumer(map);
     traverseFast(ast, node => {
       fixupLocation(node.loc);
       fixupComments(node.leadingComments);
@@ -1300,7 +1301,14 @@ export class LexicalEnvironment {
       fixupComments(node.trailingComments);
       return false;
     });
-    function getPositionInfo(position: BabelNodePosition) {
+
+    type PositionInfo = {
+      originalPosition: NullableMappedPosition,
+      newLine: number,
+      newColumn: number,
+      rewritten: boolean,
+    };
+    function getPositionInfo(position: BabelNodePosition): PositionInfo {
       let info = positionInfos.get(position);
       if (info === undefined)
         positionInfos.set(
@@ -1314,19 +1322,26 @@ export class LexicalEnvironment {
         );
       return info;
     }
-    function fixupPosition(pos: BabelNodePosition, posInfo, otherInfo) {
+    function fixupPosition(pos: BabelNodePosition, posInfo: PositionInfo, otherInfo: PositionInfo): void {
       if (posInfo.rewritten) return;
-      if (posInfo.originalPosition.source == null) {
+      let posOriginalPosition = posInfo.originalPosition;
+      if (posOriginalPosition.source == null) {
         invariant(otherInfo.originalPosition.source != null);
-        pos.line = Math.max(0, pos.line + otherInfo.originalPosition.line - otherInfo.newLine);
-        pos.column = Math.max(0, pos.column + otherInfo.originalPosition.column - otherInfo.newColumn);
+
+        let deltaLine = posInfo.newLine - otherInfo.newLine;
+        pos.line = Math.max(0, otherInfo.originalPosition.line + deltaLine);
+
+        let deltaColumn = posInfo.newColumn - otherInfo.newColumn;
+        pos.column = Math.max(0, otherInfo.originalPosition.column + deltaColumn);
       } else {
-        pos.line = posInfo.originalPosition.line;
-        pos.column = posInfo.originalPosition.column;
+        invariant(typeof posOriginalPosition.line === "number");
+        pos.line = posOriginalPosition.line;
+        invariant(typeof posOriginalPosition.column === "number");
+        pos.column = posOriginalPosition.column;
       }
       posInfo.rewritten = true;
     }
-    function fixupLocation(loc: ?BabelNodeSourceLocation) {
+    function fixupLocation(loc: ?BabelNodeSourceLocation): void {
       if (loc == null) return;
       if (loc.source === undefined || loc.source !== source) return;
       // TODO: Ensure that loc.source corresponds to map. See #2353.
@@ -1347,12 +1362,13 @@ export class LexicalEnvironment {
         fixupPosition(locEnd, endInfo, startInfo);
 
         // NOTE: The end position seems to be sometimes wrong, probably due to a limitation of
-        // what's persisted in the sourcemaps. In fact, the end position maybe so wrong that
+        // what's persisted in the sourcemaps. In fact, the end position may be so wrong that
         // it points to before the start position.
         // The best way to deal with that is to never print end positions in user-facing
         // messages.
 
         invariant(loc.source !== startOriginalPosition.source);
+        invariant(startOriginalPosition.source != null);
         loc.source = startOriginalPosition.source;
       }
     }
@@ -1373,7 +1389,7 @@ export class LexicalEnvironment {
       return false;
     });
 
-    function fixupComments(comments: ?Array<BabelNodeComment>) {
+    function fixupComments(comments: ?Array<BabelNodeComment>): void {
       if (!comments) return;
       for (let c of comments) {
         let loc = c.loc;
